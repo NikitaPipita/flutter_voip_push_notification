@@ -14,20 +14,11 @@ BOOL RunningInAppExtension(void)
     BOOL _resumingFromBackground;
     PKPushRegistry * _voipRegistry;
     BOOL _flutterStarted;
-    
-}
-
--(BOOL)flutterStarted {
-    return _flutterStarted;
-}
-
--(void)setFlutterStarted:(BOOL)flutterStarted {
-    _flutterStarted = flutterStarted;
+    NSMutableArray *pushData;
 }
 
 + (void)registerWithRegistrar:(NSObject<FlutterPluginRegistrar>*)registrar {
     FlutterVoipPushNotificationPlugin* instance = [[FlutterVoipPushNotificationPlugin alloc] initWithRegistrar:registrar messenger:[registrar messenger]];
-    
     [registrar addApplicationDelegate:instance];
 }
 
@@ -35,7 +26,7 @@ BOOL RunningInAppExtension(void)
                         messenger:(NSObject<FlutterBinaryMessenger>*)messenger{
     
     self = [super init];
-    
+    pushData = [[NSMutableArray alloc] init];
     if (self) {
         _channel = [FlutterMethodChannel
                     methodChannelWithName:@"com.peerwaya/flutter_voip_push_notification"
@@ -78,15 +69,21 @@ BOOL RunningInAppExtension(void)
         result([self checkPermissions]);
     } if (([@"configure" isEqualToString:method])) {
         _flutterStarted = YES;
-        NSLog(@"[FlutterVoipPushNotificationPlugin] handleMethodCall pushData = %@", self.pushData);
-        if ([self.pushData count] != 0) {
-            for (id value in self.pushData) {
-                NSLog(@"[FlutterVoipPushNotificationPlugin] handleMethodCall value = %@", value);
-                NSString* callBackName = [value objectForKey: @"method"];
-                NSDictionary *notificationPayload = [value objectForKey: @"notification"];
+#ifdef DEBUG
+        NSLog(@"[FlutterVoipPushNotificationPlugin] handleMethodCall pushData = %@", pushData);
+#endif
+        if ([pushData count] != 0) {
+            for (id value in pushData) {
+                NSNotification *notification = [value objectForKey: @"notification"];
                 BOOL isLocal = [value objectForKey: @"local"];
-                [_channel invokeMethod:callBackName arguments:@{@"local": @(isLocal), @"notification": notificationPayload}];
+                if (isLocal) {
+                    [self handleLocalNotificationReceived:notification];
+                }
+                else {
+                    [self handleRemoteNotificationReceived:notification];
+                }
             }
+            [pushData removeAllObjects];
         }
     } if ([@"presentLocalNotification" isEqualToString:method]) {
         [self presentLocalNotification:call.arguments];
@@ -206,36 +203,48 @@ didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
 
 - (void)handleLocalNotificationReceived:(NSNotification *)notification
 {
-    if (_resumingFromBackground) {
-        NSLog(@"[FlutterVoipPushNotificationPlugin] handleLocalNotificationReceived onResume");
-        [self saveOrInvoke:notification.userInfo isLocal:YES callBackName:@"onResume"];
-    } else {
-        NSLog(@"[FlutterVoipPushNotificationPlugin] handleLocalNotificationReceived onMessage");
-        [self saveOrInvoke:notification.userInfo isLocal:YES callBackName:@"onMessage"];
+#ifdef DEBUG
+    NSLog(@"[FlutterVoipPushNotificationPlugin] handleLocalNotificationReceived flutterStarted = %d", _flutterStarted);
+#endif
+    if (_flutterStarted) {
+        [self handleNotification:notification isLocal:YES];
+    }
+    else {
+        [self cachedNotificationData:notification isLocal:YES];
     }
 }
 
 - (void)handleRemoteNotificationReceived:(NSNotification *)notification
 {
-    if (_resumingFromBackground) {
-        NSLog(@"[FlutterVoipPushNotificationPlugin] handleRemoteNotificationReceived onResume");
-        [self saveOrInvoke:notification.userInfo isLocal:NO callBackName:@"onResume"];
-    } else {
-        NSLog(@"[FlutterVoipPushNotificationPlugin] handleRemoteNotificationReceived onMessage");
-        [self saveOrInvoke:notification.userInfo isLocal:NO callBackName:@"onMessage"];
+#ifdef DEBUG
+    NSLog(@"[FlutterVoipPushNotificationPlugin] handleRemoteNotificationReceived flutterStarted = %d", _flutterStarted);
+#endif
+    if (_flutterStarted) {
+        [self handleNotification:notification isLocal:NO];
+    }
+    else {
+        [self cachedNotificationData:notification isLocal:NO];
     }
 }
 
--(void)saveOrInvoke: (NSDictionary*)notificationPayload isLocal:(BOOL)isLocal callBackName:(NSString*)callBackName
-{
-    NSLog(@"[FlutterVoipPushNotificationPlugin] saveOrInvoke flutterStarted = %d", [self flutterStarted]);
-    if ([self flutterStarted]) {
-        [_channel invokeMethod:callBackName arguments:@{@"local": @(isLocal), @"notification": notificationPayload}];
-    }
-    else {
-        self.pushData = [NSMutableArray new];
-        [self.pushData addObject: [NSDictionary dictionaryWithObjectsAndKeys: callBackName, @"method", @(isLocal), @"local", notificationPayload, @"notification", nil]];
-        NSLog(@"[FlutterVoipPushNotificationPlugin] saveOrInvoke pushData = %@", self.pushData);
+-(void)cachedNotificationData: (NSNotification*)notification isLocal:(BOOL)isLocal {
+    [pushData addObject: [NSDictionary dictionaryWithObjectsAndKeys: @(isLocal), @"local", notification, @"notification", nil]];
+#ifdef DEBUG
+    NSLog(@"[FlutterVoipPushNotificationPlugin] cachedNotificationData pushData = %@", pushData);
+#endif
+}
+
+-(void)handleNotification: (NSNotification*)notification isLocal:(BOOL)isLocal {
+    if (_resumingFromBackground) {
+        [_channel invokeMethod:@"onResume" arguments:@{@"local": @(isLocal), @"notification": notification.userInfo}];
+#ifdef DEBUG
+        NSLog(@"[FlutterVoipPushNotificationPlugin] handleNotification onResume notification = %@",notification);
+#endif
+    } else {
+        [_channel invokeMethod:@"onMessage" arguments:@{@"local": @(isLocal), @"notification": notification.userInfo}];
+#ifdef DEBUG
+        NSLog(@"[FlutterVoipPushNotificationPlugin] handleNotification onMessage notification = %@",notification);
+#endif
     }
 }
 
