@@ -76,12 +76,7 @@ BOOL RunningInAppExtension(void)
             for (id value in pushData) {
                 NSNotification *notification = [value objectForKey: @"notification"];
                 BOOL isLocal = [value objectForKey: @"local"];
-                if (isLocal) {
-                    [self handleLocalNotificationReceived:notification];
-                }
-                else {
-                    [self handleRemoteNotificationReceived:notification];
-                }
+                [self handleNotification:notification isLocal:isLocal];
             }
             [pushData removeAllObjects];
         }
@@ -247,6 +242,5 @@ didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
 #endif
     }
 }
-
 
 @end
