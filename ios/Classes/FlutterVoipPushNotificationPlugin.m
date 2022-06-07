@@ -13,6 +13,8 @@ BOOL RunningInAppExtension(void)
     FlutterMethodChannel* _channel;
     BOOL _resumingFromBackground;
     PKPushRegistry * _voipRegistry;
+    BOOL _flutterStarted;
+    NSMutableArray *pushData;
 }
 
 + (void)registerWithRegistrar:(NSObject<FlutterPluginRegistrar>*)registrar {
@@ -21,10 +23,10 @@ BOOL RunningInAppExtension(void)
 }
 
 - (instancetype)initWithRegistrar:(NSObject<FlutterPluginRegistrar>*)registrar
-                      messenger:(NSObject<FlutterBinaryMessenger>*)messenger{
+                        messenger:(NSObject<FlutterBinaryMessenger>*)messenger{
     
     self = [super init];
-    
+    pushData = [[NSMutableArray alloc] init];
     if (self) {
         _channel = [FlutterMethodChannel
                     methodChannelWithName:@"com.peerwaya/flutter_voip_push_notification"
@@ -65,7 +67,20 @@ BOOL RunningInAppExtension(void)
             return;
         }
         result([self checkPermissions]);
-    }if ([@"presentLocalNotification" isEqualToString:method]) {
+    } if (([@"configure" isEqualToString:method])) {
+        _flutterStarted = YES;
+#ifdef DEBUG
+        NSLog(@"[FlutterVoipPushNotificationPlugin] handleMethodCall pushData = %@", pushData);
+#endif
+        if ([pushData count] != 0) {
+            for (id value in pushData) {
+                NSNotification *notification = [value objectForKey: @"notification"];
+                BOOL isLocal = [value objectForKey: @"local"];
+                [self handleNotification:notification isLocal:isLocal];
+            }
+            [pushData removeAllObjects];
+        }
+    } if ([@"presentLocalNotification" isEqualToString:method]) {
         [self presentLocalNotification:call.arguments];
         result(nil);
     }if ([@"getToken" isEqualToString:method]) {
@@ -97,10 +112,10 @@ BOOL RunningInAppExtension(void)
 {
     NSUInteger types = [[UIApplication sharedApplication] currentUserNotificationSettings].types;
     return @{
-             @"alert": @((types & UIUserNotificationTypeAlert) > 0),
-             @"badge": @((types & UIUserNotificationTypeBadge) > 0),
-             @"sound": @((types & UIUserNotificationTypeSound) > 0),
-             };
+        @"alert": @((types & UIUserNotificationTypeAlert) > 0),
+        @"badge": @((types & UIUserNotificationTypeBadge) > 0),
+        @"sound": @((types & UIUserNotificationTypeSound) > 0),
+    };
 }
 
 - (void)voipRegistration
@@ -123,17 +138,17 @@ BOOL RunningInAppExtension(void)
 #pragma mark - AppDelegate
 
 - (BOOL)application:(UIApplication *)application
-    didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
-  [self voipRegistration];
-  return YES;
+didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+    [self voipRegistration];
+    return YES;
 }
 
 - (void)applicationDidEnterBackground:(UIApplication *)application {
-  _resumingFromBackground = YES;
+    _resumingFromBackground = YES;
 }
 
 - (void)applicationDidBecomeActive:(UIApplication *)application {
-  _resumingFromBackground = NO;
+    _resumingFromBackground = NO;
 }
 
 
@@ -164,7 +179,7 @@ BOOL RunningInAppExtension(void)
     [[NSNotificationCenter defaultCenter] postNotificationName:FlutterVoipRemoteNotificationsRegistered
                                                         object:self
                                                       userInfo:@{@"deviceToken" : [hexString copy]}];
-   
+    
 }
 
 + (void)didReceiveIncomingPushWithPayload:(PKPushPayload *)payload forType:(NSString *)type
@@ -184,24 +199,47 @@ BOOL RunningInAppExtension(void)
 - (void)handleLocalNotificationReceived:(NSNotification *)notification
 {
 #ifdef DEBUG
-    NSLog(@"[FlutterVoipPushNotificationPlugin] handleLocalNotificationReceived notification.userInfo = %@",notification.userInfo);
+    NSLog(@"[FlutterVoipPushNotificationPlugin] handleLocalNotificationReceived flutterStarted = %d", _flutterStarted);
 #endif
-    if (_resumingFromBackground) {
-        [_channel invokeMethod:@"onResume" arguments:@{@"local": @YES, @"notification": notification.userInfo}];
-    } else {
-        [_channel invokeMethod:@"onMessage" arguments:@{@"local": @YES, @"notification": notification.userInfo}];
+    if (_flutterStarted) {
+        [self handleNotification:notification isLocal:YES];
+    }
+    else {
+        [self cachedNotificationData:notification isLocal:YES];
     }
 }
 
 - (void)handleRemoteNotificationReceived:(NSNotification *)notification
 {
 #ifdef DEBUG
-    NSLog(@"[FlutterVoipPushNotificationPlugin] handleRemoteNotificationReceived notification.userInfo = %@", notification.userInfo);
+    NSLog(@"[FlutterVoipPushNotificationPlugin] handleRemoteNotificationReceived flutterStarted = %d", _flutterStarted);
 #endif
+    if (_flutterStarted) {
+        [self handleNotification:notification isLocal:NO];
+    }
+    else {
+        [self cachedNotificationData:notification isLocal:NO];
+    }
+}
+
+-(void)cachedNotificationData: (NSNotification*)notification isLocal:(BOOL)isLocal {
+    [pushData addObject: [NSDictionary dictionaryWithObjectsAndKeys: @(isLocal), @"local", notification, @"notification", nil]];
+#ifdef DEBUG
+    NSLog(@"[FlutterVoipPushNotificationPlugin] cachedNotificationData pushData = %@", pushData);
+#endif
+}
+
+-(void)handleNotification: (NSNotification*)notification isLocal:(BOOL)isLocal {
     if (_resumingFromBackground) {
-        [_channel invokeMethod:@"onResume" arguments:@{@"local": @NO, @"notification": notification.userInfo}];
+        [_channel invokeMethod:@"onResume" arguments:@{@"local": @(isLocal), @"notification": notification.userInfo}];
+#ifdef DEBUG
+        NSLog(@"[FlutterVoipPushNotificationPlugin] handleNotification onResume notification = %@",notification);
+#endif
     } else {
-        [_channel invokeMethod:@"onMessage" arguments:@{@"local": @NO, @"notification": notification.userInfo}];
+        [_channel invokeMethod:@"onMessage" arguments:@{@"local": @(isLocal), @"notification": notification.userInfo}];
+#ifdef DEBUG
+        NSLog(@"[FlutterVoipPushNotificationPlugin] handleNotification onMessage notification = %@",notification);
+#endif
     }
 }
 
